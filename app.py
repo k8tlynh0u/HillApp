@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import smtplib
+import pandas as pd # Already imported, but essential
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from email.mime.multipart import MIMEMultipart
@@ -32,6 +33,23 @@ def setup_spacy_model():
     except OSError:
         st.error("SpaCy model 'en_core_web_sm' not found in your requirements.txt."); st.stop()
 
+## MODIFIED: Function to load and format the new, detailed congress data
+@st.cache_data
+def load_congress_data():
+    """Loads congress data from legislators-current.csv and prepares it."""
+    try:
+        df = pd.read_csv("legislators-current.csv")
+        # Combine relevant columns to create a user-friendly dropdown label
+        # Example: "Pelosi, Nancy (D-CA, House)"
+        df['display_label'] = df['last_name'] + ", " + df['first_name'] + \
+                              " (" + df['party'].str[0] + "-" + df['state'] + ", " + \
+                              df['type'].str.capitalize() + ")"
+        # Return the full DataFrame, sorted by last name for easy browsing
+        return df.sort_values('last_name')
+    except FileNotFoundError:
+        st.error("The 'legislators-current.csv' file was not found. Please make sure it's in your repository.")
+        return pd.DataFrame() # Return empty DataFrame on error
+
 openai_client = setup_openai_client()
 nlp = setup_spacy_model()
 
@@ -42,13 +60,12 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 # --- HELPER FUNCTIONS ---
-
+# (All your original helper functions remain unchanged)
 def parse_sentiment(sentiment_string):
     if "Positive" in sentiment_string: return "Positive"
     if "Negative" in sentiment_string: return "Negative"
     return "Neutral"
 
-# (The rest of your helper functions are unchanged)
 def fetch_google_news_mentions(person_name, from_date, to_date):
     mentions_found = []
     try:
@@ -113,33 +130,45 @@ def send_email_with_attachment(subject, body, recipient_email, file_path):
         return True
     except Exception as e:
         st.error(f"An error occurred while sending the email: {e}"); return False
-
 # --- STREAMLIT WEB APPLICATION INTERFACE ---
-st.set_page_config(page_title="kaitlyn's news report", layout="wide", page_icon="📰")
-st.title("📰 kaitlyn's daily news report")
+st.set_page_config(page_title="Hill News Report", layout="wide", page_icon="🏛️")
+st.title("🏛️ The Hill: Daily News Report")
 st.markdown("""
-track news mentions for any public figure + get an AI summary/sentiment report
-
-enter a name, date, and email to get started
-
-*refrain from entering today's date for optimal functionality*
+Track news mentions for any member of Congress + get an AI summary/sentiment report.
+Select a representative, a date, and an optional email to get started.
+*Refrain from entering today's date for optimal functionality.*
 """)
 
+## MODIFIED: Load the congress members DataFrame
+congress_df = load_congress_data()
+if congress_df.empty:
+    st.stop() # Stop the app if the data file can't be loaded
 
 col1, col2 = st.columns(2)
 with col1:
-    person_name = st.text_input("👤 **Person's Full Name**", placeholder="e.g., Tom Smith")
+    ## MODIFIED: Use the 'display_label' column for the dropdown options
+    selected_label = st.selectbox(
+        "👤 **Select a Member of Congress**",
+        options=congress_df['display_label'].tolist(),
+        index=None,  # This makes the default selection blank
+        placeholder="Search for a name..."
+    )
     date_input = st.date_input("🗓️ **Date to Search**", datetime.now() - timedelta(days=1))
 with col2:
     recipient_email = st.text_input("✉️ **Your Email Address (Optional)**", placeholder="Enter your email to receive the report")
 
 if st.button("🚀 Generate Report", type="primary", use_container_width=True):
-    if not person_name:
-        st.warning("Please enter a person's name to start the analysis."); st.stop()
+    ## MODIFIED: Check if a selection was made and extract the proper 'full_name' for searching
+    if not selected_label:
+        st.warning("Please select a member of Congress to start the analysis."); st.stop()
+
+    # Find the row that matches the selected label and get the 'full_name' from it
+    person_name = congress_df.loc[congress_df['display_label'] == selected_label, 'full_name'].iloc[0]
 
     from_date = date_input
     to_date = from_date + timedelta(days=1)
     
+    # The rest of the app logic is UNCHANGED because 'person_name' is now correctly set.
     results, failed_articles, sentiments_list, sources_list = {}, [], [], []
     wordcloud_text = ""
 
@@ -160,9 +189,7 @@ if st.button("🚀 Generate Report", type="primary", use_container_width=True):
                 status.write(f"➡️ **Processing Article {i+1}/{len(newsapi_articles)}:** [{original_title}]({url})")
                 processed_title, mentions, article_text = process_article(url, person_name)
                 
-                # --- MODIFIED LOGIC BLOCK ---
                 if article_text:
-                    # Condition: Only proceed if the person was actually mentioned in sentences.
                     if mentions:
                         status.write("   - ✅ Content parsed, mentions found. Proceeding with AI analysis.")
                         summary = get_summary_from_gpt(article_text)
@@ -175,10 +202,8 @@ if st.button("🚀 Generate Report", type="primary", use_container_width=True):
                         sources_list.append(urlparse(url).netloc.replace('www.', ''))
                         wordcloud_text += f" {final_title} {summary}"
                     else:
-                        # This article is readable but doesn't mention the person, so we skip it.
                         status.write(f"   - ⚠️ Skipping (no specific mentions of '{person_name}' found in article text).")
                 else:
-                    # This article failed to download (paywall, etc.)
                     status.write("   - ⚠️ Skipping (article content is unreadable or too short).")
                     failed_articles.append((original_title, url))
         
