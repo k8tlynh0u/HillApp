@@ -201,7 +201,7 @@ if st.button("🚀 Generate Report", type="primary", use_container_width=True):
         with viz_col2:
             if bar_fig: st.plotly_chart(bar_fig, use_container_width=True)
         if wordcloud_img:
-            st.subheader("Keyword Cloud"); st.image(wordcloud_img, use_column_width=True)
+            st.subheader("Keyword Cloud"); st.image(wordcloud_img, use_container_width=True)
 
     st.header("📄 Detailed Article Breakdown", divider='rainbow')
     report_text_content = f"News Report for {person_name} on {from_date.strftime('%A, %B %d, %Y')}\n" + "="*50 + "\n\n"
