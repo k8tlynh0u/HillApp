@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import smtplib
-import pandas as pd # Already imported, but essential
+import pandas as pd
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from email.mime.multipart import MIMEMultipart
@@ -33,22 +33,18 @@ def setup_spacy_model():
     except OSError:
         st.error("SpaCy model 'en_core_web_sm' not found in your requirements.txt."); st.stop()
 
-## MODIFIED: Function to load and format the new, detailed congress data
 @st.cache_data
 def load_congress_data():
     """Loads congress data from legislators-current.csv and prepares it."""
     try:
         df = pd.read_csv("legislators-current.csv")
-        # Combine relevant columns to create a user-friendly dropdown label
-        # Example: "Pelosi, Nancy (D-CA, House)"
         df['display_label'] = df['last_name'] + ", " + df['first_name'] + \
                               " (" + df['party'].str[0] + "-" + df['state'] + ", " + \
                               df['type'].str.capitalize() + ")"
-        # Return the full DataFrame, sorted by last name for easy browsing
         return df.sort_values('last_name')
     except FileNotFoundError:
         st.error("The 'legislators-current.csv' file was not found. Please make sure it's in your repository.")
-        return pd.DataFrame() # Return empty DataFrame on error
+        return pd.DataFrame()
 
 openai_client = setup_openai_client()
 nlp = setup_spacy_model()
@@ -60,7 +56,6 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 # --- HELPER FUNCTIONS ---
-# (All your original helper functions remain unchanged)
 def parse_sentiment(sentiment_string):
     if "Positive" in sentiment_string: return "Positive"
     if "Negative" in sentiment_string: return "Negative"
@@ -130,151 +125,192 @@ def send_email_with_attachment(subject, body, recipient_email, file_path):
         return True
     except Exception as e:
         st.error(f"An error occurred while sending the email: {e}"); return False
+
 # --- STREAMLIT WEB APPLICATION INTERFACE ---
 st.set_page_config(page_title="Hill News Report", layout="wide", page_icon="🏛️")
 st.title("🏛️ Kaitlyn's Hill News Report")
-st.markdown("""
-Track news mentions for any member of the 119th Congress + get an AI summary/sentiment report
 
-Enter a name, date, and email to get started
+# --- ACCESS CONTROL START ---
+# Initialize session state for email validation if it doesn't exist
+if 'email_validated' not in st.session_state:
+    st.session_state.email_validated = False
+    st.session_state.user_email = ""
 
-*Refrain from entering today's date for optimal functionality*
-""")
-
-
-## MODIFIED: Load the congress members DataFrame
-congress_df = load_congress_data()
-if congress_df.empty:
-    st.stop() # Stop the app if the data file can't be loaded
-
-col1, col2 = st.columns(2)
-with col1:
-    ## MODIFIED: Use the 'display_label' column for the dropdown options
-    selected_label = st.selectbox(
-        "👤 **Select a Member of Congress**",
-        options=congress_df['display_label'].tolist(),
-        index=None,  # This makes the default selection blank
-        placeholder="Search for a name..."
-    )
-    date_input = st.date_input("🗓️ **Date to Search**", datetime.now() - timedelta(days=1))
-with col2:
-    recipient_email = st.text_input("✉️ **Your Email Address**", placeholder="Enter your email to receive the report")
-
-if st.button("🚀 Generate Report", type="primary", use_container_width=True):
-    ## MODIFIED: Check if a selection was made and extract the proper 'full_name' for searching
-    if not selected_label:
-        st.warning("Please select a member of Congress to start the analysis."); st.stop()
-
-    # Find the row that matches the selected label and get the 'full_name' from it
-    person_name = congress_df.loc[congress_df['display_label'] == selected_label, 'full_name'].iloc[0]
-
-    from_date = date_input
-    to_date = from_date + timedelta(days=1)
+# If the user's email has not been validated, show the login screen.
+if not st.session_state.email_validated:
+    st.warning("This tool is restricted to authorized users. Please enter your official government email address to proceed.")
     
-    # The rest of the app logic is UNCHANGED because 'person_name' is now correctly set.
-    results, failed_articles, sentiments_list, sources_list = {}, [], [], []
-    wordcloud_text = ""
+    with st.form("email_gate"):
+        email_input = st.text_input(
+            "✉️ **Your .gov Email Address**", 
+            placeholder="e.g., your.name@senate.gov"
+        )
+        submitted = st.form_submit_button("🔑 Access Tool")
 
-    with st.status(f"Running Analysis for '{person_name}'...", expanded=True) as status:
-        status.write("🧠 **Step 1: Fetching Articles**")
-        newsapi_client = NewsApiClient(api_key=MY_API_KEY)
-        newsapi_articles = fetch_from_newsapi(newsapi_client, person_name, from_date, to_date)
-        status.write(f"✅ Found {len(newsapi_articles)} articles from NewsAPI.")
-        google_mentions = fetch_google_news_mentions(person_name, from_date, to_date)
-        status.write(f"✅ Found {len(google_mentions)} mentions from Google News.")
+        if submitted:
+            # Validate the email address
+            if email_input.lower().endswith(('.senate.gov', '.house.gov')):
+                st.session_state.email_validated = True
+                st.session_state.user_email = email_input
+                st.rerun()  # Rerun the script to show the main app
+            else:
+                st.error("Access Denied: Please use a valid .senate.gov or .house.gov email address.")
 
-        if not newsapi_articles and not google_mentions:
-            status.update(label="Analysis failed!", state="error", expanded=True); st.error(f"No articles or mentions found for '{person_name}' on {from_date.strftime('%Y-%m-%d')}."); st.stop()
+# If the email has been validated, show the main application.
+else:
+    # --- MAIN APPLICATION UI START (WRAPPED IN ELSE BLOCK) ---
+    
+    with st.sidebar:
+        st.success(f"Logged in as:\n**{st.session_state.user_email}**")
+        if st.button("Logout"):
+            # Clear the session state to log out
+            st.session_state.email_validated = False
+            st.session_state.user_email = ""
+            st.rerun()
+
+    st.markdown("""
+    Track news mentions for any member of the 119th Congress + get an AI summary/sentiment report
+
+    Enter a name, date, and email to get started
+
+    *Refrain from entering today's date for optimal functionality*
+    """)
+
+    congress_df = load_congress_data()
+    if congress_df.empty:
+        st.stop()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_label = st.selectbox(
+            "👤 **Select a Member of Congress**",
+            options=congress_df['display_label'].tolist(),
+            index=None,
+            placeholder="Search for a name..."
+        )
+        date_input = st.date_input("🗓️ **Date to Search**", datetime.now() - timedelta(days=1))
+    with col2:
+        # Pre-fill the email with the validated address from session state
+        recipient_email = st.text_input(
+            "✉️ **Your Email Address**",
+            value=st.session_state.user_email,
+            placeholder="Enter your email to receive the report"
+        )
+
+    if st.button("🚀 Generate Report", type="primary", use_container_width=True):
+        if not selected_label:
+            st.warning("Please select a member of Congress to start the analysis."); st.stop()
+
+        person_name = congress_df.loc[congress_df['display_label'] == selected_label, 'full_name'].iloc[0]
+
+        from_date = date_input
+        to_date = from_date + timedelta(days=1)
         
-        if newsapi_articles:
-            status.write(f"🧠 **Step 2: Analyzing {len(newsapi_articles)} Articles**")
-            for i, (original_title, url) in enumerate(newsapi_articles):
-                status.write(f"➡️ **Processing Article {i+1}/{len(newsapi_articles)}:** [{original_title}]({url})")
-                processed_title, mentions, article_text = process_article(url, person_name)
-                
-                if article_text:
-                    if mentions:
-                        status.write("   - ✅ Content parsed, mentions found. Proceeding with AI analysis.")
-                        summary = get_summary_from_gpt(article_text)
-                        sentiment = get_sentiment_from_gpt(person_name, mentions)
-                        
-                        final_title = processed_title if processed_title != "Title Not Found" else original_title
-                        results[url] = {'title': final_title, 'summary': summary, 'mentions': mentions, 'sentiment': sentiment}
-                        
-                        sentiments_list.append(parse_sentiment(sentiment))
-                        sources_list.append(urlparse(url).netloc.replace('www.', ''))
-                        wordcloud_text += f" {final_title} {summary}"
-                    else:
-                        status.write(f"   - ⚠️ Skipping (no specific mentions of '{person_name}' found in article text).")
-                else:
-                    status.write("   - ⚠️ Skipping (article content is unreadable or too short).")
-                    failed_articles.append((original_title, url))
-        
-        status.update(label="✅ Analysis Complete!", state="complete", expanded=False)
+        results, failed_articles, sentiments_list, sources_list = {}, [], [], []
+        wordcloud_text = ""
 
-    if not results and not google_mentions:
-        st.warning("No articles with direct mentions were found to analyze."); st.stop()
-    
-    if results: st.balloons()
-    
-    st.header("📊 Report at a Glance", divider='rainbow')
-    donut_fig = create_sentiment_donut_chart(sentiments_list)
-    bar_fig = create_source_bar_chart(sources_list)
-    wordcloud_img = create_word_cloud(wordcloud_text)
-    
-    if results:
-        viz_col1, viz_col2 = st.columns(2)
-        with viz_col1:
-            if donut_fig: st.plotly_chart(donut_fig, use_container_width=True)
-        with viz_col2:
-            if bar_fig: st.plotly_chart(bar_fig, use_container_width=True)
-        if wordcloud_img:
-            st.subheader("Keyword Cloud"); st.image(wordcloud_img, use_container_width=True)
+        with st.status(f"Running Analysis for '{person_name}'...", expanded=True) as status:
+            status.write("🧠 **Step 1: Fetching Articles**")
+            newsapi_client = NewsApiClient(api_key=MY_API_KEY)
+            newsapi_articles = fetch_from_newsapi(newsapi_client, person_name, from_date, to_date)
+            status.write(f"✅ Found {len(newsapi_articles)} articles from NewsAPI.")
+            google_mentions = fetch_google_news_mentions(person_name, from_date, to_date)
+            status.write(f"✅ Found {len(google_mentions)} mentions from Google News.")
 
-    st.header("📄 Detailed Article Breakdown", divider='rainbow')
-    report_text_content = f"News Report for {person_name} on {from_date.strftime('%A, %B %d, %Y')}\n" + "="*50 + "\n\n"
-    
-    if results:
-        report_text_content += "--- Analyzed Articles from NewsAPI ---\n\n"
-        for i, (url, data) in enumerate(results.items(), 1):
-            with st.container(border=True):
-                st.subheader(f"{i}. {data.get('title', 'Title Not Found')}", anchor=False); st.markdown(f"**Source:** [{url}]({url})")
-                st.info(f"**AI Summary:** {data['summary']}")
-                if "Positive" in data['sentiment']: st.success(f"**Sentiment:** {data['sentiment']}")
-                elif "Negative" in data['sentiment']: st.error(f"**Sentiment:** {data['sentiment']}")
-                else: st.warning(f"**Sentiment:** {data['sentiment']}")
-                if data['mentions']:
-                    with st.expander("Show mentions..."):
-                        for sent in data['mentions']: st.markdown(f'- "{sent}"')
-            report_text_content += f"{i}. {data.get('title', 'Title Not Found')}\n   URL: {url}\n\n   AI Summary: {data['summary']}\n\n   Sentiment Analysis: {data['sentiment']}\n\n   Mentions Found:\n"
-            for sent in data['mentions']: report_text_content += f'   - "{sent}"\n'
-            report_text_content += "\n"
-    
-    if failed_articles:
-        st.subheader("Unanalyzable Articles from NewsAPI")
-        st.warning("These articles were found but were likely behind a paywall or blocked by the publisher:")
-        for title, url in failed_articles:
-            st.markdown(f"- **{title}** ([Source]({url}))")
+            if not newsapi_articles and not google_mentions:
+                status.update(label="Analysis failed!", state="error", expanded=True); st.error(f"No articles or mentions found for '{person_name}' on {from_date.strftime('%Y-%m-%d')}."); st.stop()
             
-    if google_mentions:
-        st.subheader(f"Mentions Found on Google News")
-        st.info("Note: These links lead to Google and may require an extra click to reach the article. Analysis is not performed on these sources.")
-        for title, link in google_mentions:
-            st.markdown(f"- **{title}** ([Source]({link}))")
+            if newsapi_articles:
+                status.write(f"🧠 **Step 2: Analyzing {len(newsapi_articles)} Articles**")
+                for i, (original_title, url) in enumerate(newsapi_articles):
+                    status.write(f"➡️ **Processing Article {i+1}/{len(newsapi_articles)}:** [{original_title}]({url})")
+                    processed_title, mentions, article_text = process_article(url, person_name)
+                    
+                    if article_text:
+                        if mentions:
+                            status.write("   - ✅ Content parsed, mentions found. Proceeding with AI analysis.")
+                            summary = get_summary_from_gpt(article_text)
+                            sentiment = get_sentiment_from_gpt(person_name, mentions)
+                            
+                            final_title = processed_title if processed_title != "Title Not Found" else original_title
+                            results[url] = {'title': final_title, 'summary': summary, 'mentions': mentions, 'sentiment': sentiment}
+                            
+                            sentiments_list.append(parse_sentiment(sentiment))
+                            sources_list.append(urlparse(url).netloc.replace('www.', ''))
+                            wordcloud_text += f" {final_title} {summary}"
+                        else:
+                            status.write(f"   - ⚠️ Skipping (no specific mentions of '{person_name}' found in article text).")
+                    else:
+                        status.write("   - ⚠️ Skipping (article content is unreadable or too short).")
+                        failed_articles.append((original_title, url))
+            
+            status.update(label="✅ Analysis Complete!", state="complete", expanded=False)
 
-    if recipient_email and (results or google_mentions or failed_articles):
+        if not results and not google_mentions:
+            st.warning("No articles with direct mentions were found to analyze."); st.stop()
+        
+        if results: st.balloons()
+        
+        st.header("📊 Report at a Glance", divider='rainbow')
+        donut_fig = create_sentiment_donut_chart(sentiments_list)
+        bar_fig = create_source_bar_chart(sources_list)
+        wordcloud_img = create_word_cloud(wordcloud_text)
+        
+        if results:
+            viz_col1, viz_col2 = st.columns(2)
+            with viz_col1:
+                if donut_fig: st.plotly_chart(donut_fig, use_container_width=True)
+            with viz_col2:
+                if bar_fig: st.plotly_chart(bar_fig, use_container_width=True)
+            if wordcloud_img:
+                st.subheader("Keyword Cloud"); st.image(wordcloud_img, use_container_width=True)
+
+        st.header("📄 Detailed Article Breakdown", divider='rainbow')
+        report_text_content = f"News Report for {person_name} on {from_date.strftime('%A, %B %d, %Y')}\n" + "="*50 + "\n\n"
+        
+        if results:
+            report_text_content += "--- Analyzed Articles from NewsAPI ---\n\n"
+            for i, (url, data) in enumerate(results.items(), 1):
+                with st.container(border=True):
+                    st.subheader(f"{i}. {data.get('title', 'Title Not Found')}", anchor=False); st.markdown(f"**Source:** [{url}]({url})")
+                    st.info(f"**AI Summary:** {data['summary']}")
+                    if "Positive" in data['sentiment']: st.success(f"**Sentiment:** {data['sentiment']}")
+                    elif "Negative" in data['sentiment']: st.error(f"**Sentiment:** {data['sentiment']}")
+                    else: st.warning(f"**Sentiment:** {data['sentiment']}")
+                    if data['mentions']:
+                        with st.expander("Show mentions..."):
+                            for sent in data['mentions']: st.markdown(f'- "{sent}"')
+                report_text_content += f"{i}. {data.get('title', 'Title Not Found')}\n   URL: {url}\n\n   AI Summary: {data['summary']}\n\n   Sentiment Analysis: {data['sentiment']}\n\n   Mentions Found:\n"
+                for sent in data['mentions']: report_text_content += f'   - "{sent}"\n'
+                report_text_content += "\n"
+        
         if failed_articles:
-            report_text_content += "\n--- Unanalyzable Articles from NewsAPI ---\n(Note: These links were found but could not be read)\n\n"
-            for i, (title, url) in enumerate(failed_articles, 1): report_text_content += f"{i}. {title}\n   Link: {url}\n\n"
+            st.subheader("Unanalyzable Articles from NewsAPI")
+            st.warning("These articles were found but were likely behind a paywall or blocked by the publisher:")
+            for title, url in failed_articles:
+                st.markdown(f"- **{title}** ([Source]({url}))")
+                
         if google_mentions:
-            report_text_content += "\n--- Additional Mentions Found on Google News ---\n(Note: These links were not analyzed)\n\n"
-            for i, (title, link) in enumerate(google_mentions, 1): report_text_content += f"{i}. {title}\n   Link: {link}\n\n"
-        with st.spinner("Preparing and sending email report..."):
-            output_filename = f"Report-{person_name.replace(' ','_')}-{from_date.strftime('%Y-%m-%d')}.txt"
-            with open(output_filename, "w", encoding='utf-8') as f: f.write(report_text_content)
-            email_subject = f"News & Sentiment Report for {person_name} on {from_date.strftime('%Y-%m-%d')}"
-            email_body = f"Hi,\n\nPlease find the attached comprehensive news report for {person_name}."
-            if send_email_with_attachment(email_subject, email_body, recipient_email, output_filename):
-                st.success(f"✅ Report sent to {recipient_email}!")
-            else: st.error("Failed to send email.")
-            if os.path.exists(output_filename): os.remove(output_filename)
+            st.subheader(f"Mentions Found on Google News")
+            st.info("Note: These links lead to Google and may require an extra click to reach the article. Analysis is not performed on these sources.")
+            for title, link in google_mentions:
+                st.markdown(f"- **{title}** ([Source]({link}))")
+
+        if recipient_email and (results or google_mentions or failed_articles):
+            if failed_articles:
+                report_text_content += "\n--- Unanalyzable Articles from NewsAPI ---\n(Note: These links were found but could not be read)\n\n"
+                for i, (title, url) in enumerate(failed_articles, 1): report_text_content += f"{i}. {title}\n   Link: {url}\n\n"
+            if google_mentions:
+                report_text_content += "\n--- Additional Mentions Found on Google News ---\n(Note: These links were not analyzed)\n\n"
+                for i, (title, link) in enumerate(google_mentions, 1): report_text_content += f"{i}. {title}\n   Link: {link}\n\n"
+            with st.spinner("Preparing and sending email report..."):
+                output_filename = f"Report-{person_name.replace(' ','_')}-{from_date.strftime('%Y-%m-%d')}.txt"
+                with open(output_filename, "w", encoding='utf-8') as f: f.write(report_text_content)
+                email_subject = f"News & Sentiment Report for {person_name} on {from_date.strftime('%Y-%m-%d')}"
+                email_body = f"Hi,\n\nPlease find the attached comprehensive news report for {person_name}."
+                if send_email_with_attachment(email_subject, email_body, recipient_email, output_filename):
+                    st.success(f"✅ Report sent to {recipient_email}!")
+                else: st.error("Failed to send email.")
+                if os.path.exists(output_filename): os.remove(output_filename)
+
+# --- ACCESS CONTROL END ---
