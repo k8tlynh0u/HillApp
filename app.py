@@ -134,7 +134,7 @@ def send_email_with_attachment(subject, body, recipient_email, file_path):
 st.set_page_config(page_title="Hill News Report", layout="wide", page_icon="🏛️")
 st.title("🏛️ Kaitlyn's Hill News Report")
 st.markdown("""
-Track news mentions for any congressman + get an AI summary/sentiment report
+Track news mentions for any member of the 119th Congress + get an AI summary/sentiment report
 
 Enter a name, date, and email to get started
 
