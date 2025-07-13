@@ -132,12 +132,15 @@ def send_email_with_attachment(subject, body, recipient_email, file_path):
         st.error(f"An error occurred while sending the email: {e}"); return False
 # --- STREAMLIT WEB APPLICATION INTERFACE ---
 st.set_page_config(page_title="Hill News Report", layout="wide", page_icon="🏛️")
-st.title("🏛️ The Hill: Daily News Report")
+st.title("🏛️ Kaitlyn's Hill News Report")
 st.markdown("""
-Track news mentions for any member of Congress + get an AI summary/sentiment report.
-Select a representative, a date, and an optional email to get started.
-*Refrain from entering today's date for optimal functionality.*
+Track news mentions for any congressman + get an AI summary/sentiment report
+
+Enter a name, date, and email to get started
+
+*Refrain from entering today's date for optimal functionality*
 """)
+
 
 ## MODIFIED: Load the congress members DataFrame
 congress_df = load_congress_data()
