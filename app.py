@@ -158,7 +158,7 @@ with col1:
     )
     date_input = st.date_input("🗓️ **Date to Search**", datetime.now() - timedelta(days=1))
 with col2:
-    recipient_email = st.text_input("✉️ **Your Email Address (Optional)**", placeholder="Enter your email to receive the report")
+    recipient_email = st.text_input("✉️ **Your Email Address**", placeholder="Enter your email to receive the report")
 
 if st.button("🚀 Generate Report", type="primary", use_container_width=True):
     ## MODIFIED: Check if a selection was made and extract the proper 'full_name' for searching
